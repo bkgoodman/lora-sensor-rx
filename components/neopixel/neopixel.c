@@ -453,16 +453,20 @@ void np_show(pixel_settings_t *px, rmt_channel_t channel)
 	uint32_t tx_end_event_mask = 1 << (channel*3);
 	RMT.int_ena.val = tx_thr_event_mask | tx_end_event_mask;
 
+  ESP_LOGI(TAG,"Neo Pixel Count %d",px->pixel_count);
 	uint16_t blen = px->pixel_count * (px->nbits / 8);
 
 	// Allocate neopixel buffer if needed
 	if (neopixel_buffer == NULL) {
 		neopixel_buffer = (uint8_t *)malloc(blen);
-    ESP_LOGI(TAG,"Neo buffer at %p",neopixel_buffer);
+    ESP_LOGI(TAG,"Neo buffer at %p len %d",neopixel_buffer,blen);
     savebuf = neopixel_buffer;
     ESP_LOGI(TAG,"Neo ptr buffer at  %p to %p",&savebuf,&neopixel_buffer);
     ESP_LOGI(TAG,"Neo buffer alloced from  %p to %p",savebuf,neopixel_buffer);
-		if (neopixel_buffer == NULL) return;
+		if (neopixel_buffer == NULL) {
+    ESP_LOGE(TAG,"Neo ptr buffer NULL  %p to %p",&savebuf,&neopixel_buffer);
+      return;
+    }
 		neopixel_buf_len = blen;
 	}
 	// Resize neopixel buffer if needed

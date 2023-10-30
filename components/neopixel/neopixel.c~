@@ -57,7 +57,6 @@ static uint8_t *savebuf = NULL;
 static uint8_t neopixel_brightness = 255;
 
 static uint8_t used_channels[RMT_CHANNEL_MAX] = {0};
-volatile uint16_t rc_val=0;
 
 // Get color value of RGB component
 //---------------------------------------------------
@@ -459,11 +458,14 @@ void np_show(pixel_settings_t *px, rmt_channel_t channel)
 	// Allocate neopixel buffer if needed
 	if (neopixel_buffer == NULL) {
 		neopixel_buffer = (uint8_t *)malloc(blen);
-    ESP_LOGI(TAG,"Neo buffer at %p",neopixel_buffer);
+    ESP_LOGI(TAG,"Neo buffer at %p len %d",neopixel_buffer,blen);
     savebuf = neopixel_buffer;
     ESP_LOGI(TAG,"Neo ptr buffer at  %p to %p",&savebuf,&neopixel_buffer);
     ESP_LOGI(TAG,"Neo buffer alloced from  %p to %p",savebuf,neopixel_buffer);
-		if (neopixel_buffer == NULL) return;
+		if (neopixel_buffer == NULL) {
+    ESP_LOGE(TAG,"Neo ptr buffer NULL  %p to %p",&savebuf,&neopixel_buffer);
+      return;
+    }
 		neopixel_buf_len = blen;
 	}
 	// Resize neopixel buffer if needed

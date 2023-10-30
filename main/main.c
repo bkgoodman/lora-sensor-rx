@@ -3,6 +3,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "neopixel.h"
+
 #include "esp_log.h"
 //#include "esp_heap_trace.h"
 #include "freertos/semphr.h"
@@ -23,6 +25,19 @@
 #define OLED_I2C_MASTER_SDA_IO (CONFIG_OLED_I2C_MASTER_SDA)               /*!< gpio number for I2C master data  */
 #define OLED_I2C_MASTER_NUM (I2C_NUMBER(CONFIG_OLED_I2C_MASTER_PORT_NUM)) /*!< I2C port number for master dev */
 #endif
+#define NEOPIXEL_RMT_CHANNEL (0)
+#define NEOPIXEL_WS2812
+
+uint32_t		pixels[CONFIG_NEOPIXEL_COUNT];
+pixel_settings_t px;
+
+void set_pixels(uint16_t r, uint16_t g, uint16_t b, uint16_t l) {
+  int i;
+  for (i=0;i<CONFIG_NEOPIXEL_COUNT;i++) {
+    np_set_pixel_rgbw_level(&px, i , r,g,b,0,l);
+  }
+  np_show(&px, NEOPIXEL_RMT_CHANNEL);
+}
 
 
 #define TAG "BKGLoRa"
@@ -39,6 +54,59 @@ SSD1306_t dev;
 void updateDisplay(char *line);
 void updateSequence();
 
+void init_leds() {
+	int rc;
+	rc = neopixel_init(CONFIG_NEOPIXEL_GPIO, NEOPIXEL_RMT_CHANNEL);
+	//rc = neopixel_init(23, 0);
+	if (rc < 0)
+		ESP_LOGE(TAG, "neopixel_init rc = %d", rc);
+
+
+	ESP_LOGE(TAG,"NEOPIXEL_COUNT %d",CONFIG_NEOPIXEL_COUNT);
+	px.pixels = (uint8_t *)pixels;
+	px.pixel_count = CONFIG_NEOPIXEL_COUNT;
+#ifdef	NEOPIXEL_WS2812
+	strcpy(px.color_order, "GRB");
+#else
+	strcpy(px.color_order, "GRBW");
+#endif
+
+	memset(&px.timings, 0, sizeof(px.timings));
+	px.timings.mark.level0 = 1;
+	px.timings.space.level0 = 1;
+	px.timings.mark.duration0 = 12;
+#ifdef	NEOPIXEL_WS2812
+	px.nbits = 24;
+	px.timings.mark.duration1 = 14;
+	px.timings.space.duration0 = 7;
+	px.timings.space.duration1 = 16;
+	px.timings.reset.duration0 = 600;
+	px.timings.reset.duration1 = 600;
+#endif
+#ifdef	NEOPIXEL_SK6812
+	px.nbits = 32;
+	px.timings.mark.duration1 = 12;
+	px.timings.space.duration0 = 6;
+	px.timings.space.duration1 = 18;
+	px.timings.reset.duration0 = 900;
+	px.timings.reset.duration1 = 900;
+#endif
+	px.brightness = 0x80;
+	np_show(&px, NEOPIXEL_RMT_CHANNEL);
+
+
+	np_set_pixel_rgbw_level(&px, 0 , 64,64,64,0,255);
+	np_show(&px, NEOPIXEL_RMT_CHANNEL);
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	
+	np_set_pixel_rgbw_level(&px, 0 , 128,128,0,0,255);
+	np_show(&px, NEOPIXEL_RMT_CHANNEL);
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+	np_set_pixel_rgbw_level(&px, 0 , 0,0,0,0,255);
+	np_show(&px, NEOPIXEL_RMT_CHANNEL);
+      ESP_LOGI(TAG,"Pixel init end...");
+}
 void task_tx(void *p,int txlen)
 {
       ESP_LOGI(TAG,"Send packet...");
@@ -212,12 +280,14 @@ void app_main()
    snprintf(macstr,sizeof(macstr),"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
 		   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
    ESP_LOGI(TAG,"Mac: %s",macstr);
+   init_leds();
 
 	ESP_LOGI(TAG,"OLED SDA %d OLED SCL %d MASTER_NUM %d",CONFIG_OLED_I2C_MASTER_SDA,CONFIG_OLED_I2C_MASTER_SCL,CONFIG_OLED_I2C_MASTER_PORT_NUM);
 	//i2c_master_init(&dev, CONFIG_OLED_I2C_MASTER_SDA, CONFIG_OLED_I2C_MASTER_SCL, -1);
 	i2c_master_init(&dev, 21, 22, -1);
  	ESP_LOGI(TAG, "Panel is 128x64");
 	ssd1306_init(&dev, 128, 64);
+  dev._flip=1;
 	ssd1306_clear_screen(&dev, false);
 	ssd1306_contrast(&dev, 0xff);
 	ssd1306_clear_line(&dev, 0, true);
@@ -252,7 +322,7 @@ void app_main()
    io_conf.mode = GPIO_MODE_INPUT;
    io_conf.pull_up_en = 1;
    gpio_config(&io_conf);
-   gpio_isr_handler_add(CONFIG_IRQ_GPIO, lora_isr_handler, (void*) 0);
+   //gpio_isr_handler_add(CONFIG_IRQ_GPIO, lora_isr_handler, (void*) 0);
 
   // Setup input receivers
     io_conf.intr_type = GPIO_INTR_NEGEDGE; // Interrupt on positive edge
@@ -270,8 +340,8 @@ void app_main()
     // gpio_install_isr_service(0);
 
     // Hook the ISR handler to both GPIO pins
-    if (CONFIG_SENSOR_PIN_1) gpio_isr_handler_add(CONFIG_SENSOR_PIN_1, gpio_isr_handler, (void*) CONFIG_SENSOR_PIN_1);
-    if (CONFIG_SENSOR_PIN_2) gpio_isr_handler_add(CONFIG_SENSOR_PIN_2, gpio_isr_handler, (void*) CONFIG_SENSOR_PIN_2);
+    //if (CONFIG_SENSOR_PIN_1) gpio_isr_handler_add(CONFIG_SENSOR_PIN_1, gpio_isr_handler, (void*) CONFIG_SENSOR_PIN_1);
+    //if (CONFIG_SENSOR_PIN_2) gpio_isr_handler_add(CONFIG_SENSOR_PIN_2, gpio_isr_handler, (void*) CONFIG_SENSOR_PIN_2);
   
    if (CONFIG_SENSOR_PIN_1) ESP_LOGI(TAG,"Sensor 1 on GPIO %d",CONFIG_SENSOR_PIN_1);
    if (CONFIG_SENSOR_PIN_2) ESP_LOGI(TAG,"Sensor 2 on GPIO %d",CONFIG_SENSOR_PIN_2);

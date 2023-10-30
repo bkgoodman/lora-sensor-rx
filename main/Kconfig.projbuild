@@ -60,6 +60,20 @@ config SCK_GPIO
     help
 	Pin Number to be used as the SCK SPI signal.
 
+config NEOPIXEL_GPIO
+    int "NeoPixel GPIO"
+    range 0 36
+    default 36
+    help
+	Pin Number to be used for NeoPixels
+
+config NEOPIXEL_COUNT
+    int "NeoPixel Count"
+    range 1 35
+    default 10
+    help
+	How many NeoPixels in strand
+
 config CALLSIGN
     string "Call Sign"
     default "?????"
