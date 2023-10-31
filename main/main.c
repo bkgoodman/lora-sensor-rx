@@ -31,6 +31,14 @@
 uint32_t		pixels[CONFIG_NEOPIXEL_COUNT];
 pixel_settings_t px;
 
+uint64_t last_seq_time=0;
+unsigned short last_seq_val=0;
+uint64_t last_pump1_time=0;
+unsigned short last_pump1_val=0;
+uint64_t last_pump2_time=0;
+unsigned short last_pump2_val=0;
+
+uint16_t crc16(const uint8_t *data, int length);
 void set_pixels(uint16_t r, uint16_t g, uint16_t b, uint16_t l) {
   int i;
   for (i=0;i<CONFIG_NEOPIXEL_COUNT;i++) {
@@ -57,7 +65,7 @@ void updateSequence();
 void init_leds() {
 	int rc;
 	rc = neopixel_init(CONFIG_NEOPIXEL_GPIO, NEOPIXEL_RMT_CHANNEL);
-	//rc = neopixel_init(23, 0);
+	//rc = neopixel_init(13, 0);
 	if (rc < 0)
 		ESP_LOGE(TAG, "neopixel_init rc = %d", rc);
 
@@ -94,19 +102,16 @@ void init_leds() {
 	px.brightness = 0x80;
 	np_show(&px, NEOPIXEL_RMT_CHANNEL);
 
-
-	np_set_pixel_rgbw_level(&px, 0 , 64,64,64,0,255);
-	np_show(&px, NEOPIXEL_RMT_CHANNEL);
-	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	set_pixels(64,64,0,255);
+	vTaskDelay(500 / portTICK_PERIOD_MS);
 	
-	np_set_pixel_rgbw_level(&px, 0 , 128,128,0,0,255);
-	np_show(&px, NEOPIXEL_RMT_CHANNEL);
-	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	set_pixels( 128,128,0,255);
+	vTaskDelay(500 / portTICK_PERIOD_MS);
 
-	np_set_pixel_rgbw_level(&px, 0 , 0,0,0,0,255);
-	np_show(&px, NEOPIXEL_RMT_CHANNEL);
+	set_pixels( 0,0,0,255);
       ESP_LOGI(TAG,"Pixel init end...");
 }
+
 void task_tx(void *p,int txlen)
 {
       ESP_LOGI(TAG,"Send packet...");
@@ -132,21 +137,64 @@ int do_rx(char *p,int maxlen)
    if(lora_received()) {
     x = lora_receive_packet((uint8_t *)p, maxlen-1);
     p[x] = 0;
-    ESP_LOGI(TAG,"Received: %s", p);
+    ESP_LOGI(TAG,"Received: (%d) \"%s\"",x, p);
     updateDisplay(p);
    lora_receive();    // put into receive mode
-    if ((x >= 11) && !strncmp(p,"K1BKG ZERO!",11)) {
+   if ((x >= 11) && !strncmp(p,"K1BKG ZERO!",11)) {
       seq=0;
       pump1=0;
       pump2=0;
     }
-    if ((x >= 11) && !strncmp(p,"K1BKG PING!",11)) {
+   else if ((x >= 11) && !strncmp(p,"K1BKG PING!",11)) {
       uint32_t item = EVENT_TIMER;
       xQueueSendFromISR(evt_queue, &item, NULL);
     }
+   else if ((x >= 9) && !strncmp(p,"K1BKG ",5)) {
+     char callsign[10];
+    unsigned short newcrc;
+     unsigned int r_seq,r_pump1,r_pump2,r_crc;
+     int res = sscanf(p,"%8s GOT %x %x %x EOT %x",
+         callsign,
+         &r_seq,
+         &r_pump1,
+         &r_pump2,
+         &r_crc);
+     newcrc = crc16((const uint8_t *)p,x-4);
+    ESP_LOGI(TAG,"Parsed (%d) %s %d %d %d CRC=0x%x/0x%x",res,callsign,r_seq,r_pump1,r_pump2,r_crc,newcrc);
+    if (newcrc == r_crc) {
+      uint64_t now = esp_timer_get_time();
+      if (r_pump1 != last_pump1_val) {
+        last_pump1_val = r_pump1;
+        last_pump1_time = now;
+      }
+      if (r_pump2 != last_pump2_val) {
+        last_pump2_val = r_pump2;
+        last_pump2_time = now;
+      }
+      if (r_seq != last_seq_val) {
+        last_seq_val = r_seq;
+        last_seq_time = now;
+      }
+    }
+   }
     return (x);
    }
    return(0);
+
+}
+
+int led_task(void *p) {
+  unsigned short seq=0;
+  while (1) {
+    int i;
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      seq++;
+      for (i=0;i<CONFIG_NEOPIXEL_COUNT;i++) {
+         np_set_pixel_rgbw_level(&px, i , 32,0,0,0,255);
+      }
+      np_set_pixel_rgbw_level(&px, seq%8 , 0,255,0,0,255);
+      np_show(&px, NEOPIXEL_RMT_CHANNEL);
+  }
 }
 
 uint64_t sensor_debounce[2] = {0,0};
@@ -280,14 +328,14 @@ void app_main()
    snprintf(macstr,sizeof(macstr),"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
 		   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
    ESP_LOGI(TAG,"Mac: %s",macstr);
-   init_leds();
+#if 1
 
 	ESP_LOGI(TAG,"OLED SDA %d OLED SCL %d MASTER_NUM %d",CONFIG_OLED_I2C_MASTER_SDA,CONFIG_OLED_I2C_MASTER_SCL,CONFIG_OLED_I2C_MASTER_PORT_NUM);
 	//i2c_master_init(&dev, CONFIG_OLED_I2C_MASTER_SDA, CONFIG_OLED_I2C_MASTER_SCL, -1);
 	i2c_master_init(&dev, 21, 22, -1);
- 	ESP_LOGI(TAG, "Panel is 128x64");
 	ssd1306_init(&dev, 128, 64);
-  dev._flip=1;
+ 	ESP_LOGI(TAG, "Panel is 128x64");
+  //dev._flip=1;
 	ssd1306_clear_screen(&dev, false);
 	ssd1306_contrast(&dev, 0xff);
 	ssd1306_clear_line(&dev, 0, true);
@@ -322,7 +370,7 @@ void app_main()
    io_conf.mode = GPIO_MODE_INPUT;
    io_conf.pull_up_en = 1;
    gpio_config(&io_conf);
-   //gpio_isr_handler_add(CONFIG_IRQ_GPIO, lora_isr_handler, (void*) 0);
+   gpio_isr_handler_add(CONFIG_IRQ_GPIO, lora_isr_handler, (void*) 0);
 
   // Setup input receivers
     io_conf.intr_type = GPIO_INTR_NEGEDGE; // Interrupt on positive edge
@@ -372,5 +420,8 @@ void app_main()
    ESP_LOGI(TAG,"Timer Created");
    xTimerStart(timer,0);
    ESP_LOGI(TAG,"Timer Started");
+#endif
+   init_leds();
+   xTaskCreate(&led_task, "led_task", 8192, NULL, 5, NULL);
 
 }

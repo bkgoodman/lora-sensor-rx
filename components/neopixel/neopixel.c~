@@ -453,6 +453,7 @@ void np_show(pixel_settings_t *px, rmt_channel_t channel)
 	uint32_t tx_end_event_mask = 1 << (channel*3);
 	RMT.int_ena.val = tx_thr_event_mask | tx_end_event_mask;
 
+  ESP_LOGI(TAG,"Neo Pixel Count %d",px->pixel_count);
 	uint16_t blen = px->pixel_count * (px->nbits / 8);
 
 	// Allocate neopixel buffer if needed
