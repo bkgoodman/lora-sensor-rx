@@ -31,6 +31,28 @@
 uint32_t		pixels[CONFIG_NEOPIXEL_COUNT];
 pixel_settings_t px;
 
+
+enum {
+  STATE_POWERON =0, // Newly powered-on - no data yet
+  STATE_OK, // Timley comms and activity on both pumps
+  STATE_RECENT , // VERY recent comms activity
+  STATE_NOCOMM1, // No comms activity in a while
+  STATE_NOCOMM2, // No comms activity in a LONGER while
+  STATE_ONEBADPUMP, // Good comms, but no activity on ONE pump for a while
+  STATE_TWOBADPUMPS // We have had no pump activity, but good comms for extendend time!!
+};
+
+char *states[] = {
+  "PowerOn",
+  "OK",
+  "RecentActivity",
+  "NoComms",
+  "NoComms!!!",
+  "OneBadPump",
+  "TwoBadPumps"
+};
+
+unsigned short state=STATE_POWERON;
 uint64_t last_seq_time=0;
 unsigned short last_seq_val=0;
 uint64_t last_pump1_time=0;
@@ -47,10 +69,12 @@ void set_pixels(uint16_t r, uint16_t g, uint16_t b, uint16_t l) {
   np_show(&px, NEOPIXEL_RMT_CHANNEL);
 }
 
+#define CONFIG_DISPOTIMER_SECONDS 30
 
 #define TAG "BKGLoRa"
 static xQueueHandle evt_queue = NULL;
 TimerHandle_t timer;
+TimerHandle_t dispoTimer;
 uint8_t mac[6];
 char macstr[18];
 int seq=0;
@@ -125,8 +149,52 @@ void task_tx(void *p,int txlen)
 #define EVENT_TIMER 1
 #define EVENT_SENSOR_1 2
 #define EVENT_SENSOR_2  3
+#define EVENT_DISPO_TIMER  4
 #define EVENT_UNKNOWN  99
 
+
+#define SECONDS 60
+#define MINUTES (60*SECONDS)
+#define HOURS (MINUTES * 60)
+
+#define TIMEOUT_PUMP  (6 * HOURS)
+#define TIMEOUT_COMMS1  (15 * MINUTES)
+#define TIMEOUT_COMMS2  (60 * MINUTES)
+
+
+//What's the disposition?
+void dispo() {
+      uint64_t now = esp_timer_get_time()/1000000;
+
+      uint64_t seqd =    now-last_seq_time;
+      uint64_t p1d =    now-last_pump1_time;
+      uint64_t p2d =    now-last_pump2_time;
+
+
+      if (seqd < 10) {
+        state = STATE_RECENT;
+      }
+
+      if (seqd != 0)
+        state = STATE_OK;
+
+      if ((p2d >= TIMEOUT_PUMP) || (p1d >= TIMEOUT_PUMP))
+        state = STATE_ONEBADPUMP;
+
+      if ((p2d >= TIMEOUT_PUMP) && (p1d >= TIMEOUT_PUMP))
+        state = STATE_TWOBADPUMPS;
+
+      if (seqd >= TIMEOUT_COMMS1)
+        state = STATE_NOCOMM1;
+
+      if (seqd >= TIMEOUT_COMMS2)
+        state = STATE_NOCOMM2;
+
+      ESP_LOGI(TAG,"LastUpdate: Seq %llu Pump1 %llu Pump2 %llu State: %s",
+          seqd,
+          p1d,
+          p2d,states[state]);
+}
 // K1BKG 00:11:22:33:44:55:66 Message<CS>
 // 0         1         2        3
 // 0123456789-123456789-12345679-1234
@@ -162,7 +230,7 @@ int do_rx(char *p,int maxlen)
      newcrc = crc16((const uint8_t *)p,x-4);
     ESP_LOGI(TAG,"Parsed (%d) %s %d %d %d CRC=0x%x/0x%x",res,callsign,r_seq,r_pump1,r_pump2,r_crc,newcrc);
     if (newcrc == r_crc) {
-      uint64_t now = esp_timer_get_time();
+      uint64_t now = esp_timer_get_time()/1000000;
       if (r_pump1 != last_pump1_val) {
         last_pump1_val = r_pump1;
         last_pump1_time = now;
@@ -176,23 +244,121 @@ int do_rx(char *p,int maxlen)
         last_seq_time = now;
       }
     }
+    dispo();
    }
     return (x);
    }
    return(0);
-
 }
-
+typedef struct rgb_s {
+  unsigned char red;
+  unsigned char green;
+  unsigned char blue;
+} rgb_t;
 int led_task(void *p) {
   unsigned short seq=0;
+  //rgb_t c;
+  rgb_t h;
+  // Assign the values `{0, 0, 255}` to the `h` struct.
+
   while (1) {
     int i;
       vTaskDelay(100 / portTICK_PERIOD_MS);
       seq++;
+
+      unsigned char over = (seq+1)%8;
+      unsigned char center = (seq%8);
+      unsigned char under = (seq+CONFIG_NEOPIXEL_COUNT-1)%8;
+
       for (i=0;i<CONFIG_NEOPIXEL_COUNT;i++) {
-         np_set_pixel_rgbw_level(&px, i , 32,0,0,0,255);
+          // What we do depends on state
+          switch (state) {
+            case STATE_POWERON: // Newly powered-on - no data yet
+               if (i==center)
+                 np_set_pixel_rgbw_level(&px, i , 0,0,128,0,255);
+               else if ((i == over) || (i == under) )
+                 np_set_pixel_rgbw_level(&px, i , 0,0,64,0,255);
+               else
+                 np_set_pixel_rgbw_level(&px, i , 0,0,32,0,255);
+              break;
+            case STATE_OK: // Timley comms and activity on both pumps
+               if (i==center)
+                 np_set_pixel_rgbw_level(&px, i , 0,128,0,0,255);
+               else if ((i == over) || (i == under) )
+                 np_set_pixel_rgbw_level(&px, i , 0,64,0,0,255);
+               else
+                 np_set_pixel_rgbw_level(&px, i , 0,32,0,0,255);
+              break;
+            case STATE_RECENT: // VERY recent comms activity
+               np_set_pixel_rgbw_level(&px, i , 32,32,32,0,255);
+               h.red = 255; h.green=255; h.blue=255;
+              break;
+            case STATE_NOCOMM1: // No comms activity in a while
+               if (i==center)
+                 np_set_pixel_rgbw_level(&px, i , 128,128,0,0,255);
+               else if ((i == over) || (i == under) )
+                 np_set_pixel_rgbw_level(&px, i , 64,64,0,0,255);
+               else
+                 np_set_pixel_rgbw_level(&px, i , 32,32,0,0,255);
+              break;
+            case STATE_NOCOMM2: // No comms activity in a LONGER while
+              if (seq % 2) 
+                 np_set_pixel_rgbw_level(&px, i , 255,255,0,0,255);
+              else
+                 np_set_pixel_rgbw_level(&px, i , 0,0,0,0,255);
+              break;
+              break;
+            case STATE_ONEBADPUMP: // Good comms, but no activity on ONE pump for a while
+               np_set_pixel_rgbw_level(&px, i , 128,0,0,0,255);
+               h.red = 255; h.green=0; h.blue=0;
+              break;
+            case STATE_TWOBADPUMPS: // We have had no pump activity, but good comms for extendend time!!
+              switch (seq % 12) {
+                  case 0:
+                  case 2:
+                  case 4:
+                    if (i< CONFIG_NEOPIXEL_COUNT/2)
+                       np_set_pixel_rgbw_level(&px, i , 255,0,0,0,255);
+                    else
+                       np_set_pixel_rgbw_level(&px, i , 0,0,0,0,255);
+                    break;
+                  case 1:
+                  case 3:
+                  case 7:
+                  case 9:
+                   np_set_pixel_rgbw_level(&px, i , 0,0,0,0,255);
+                    break;
+                  case 6:
+                  case 8:
+                  case 10:
+                    if (i< CONFIG_NEOPIXEL_COUNT/2)
+                       np_set_pixel_rgbw_level(&px, i , 0,0,0,0,255);
+                    else
+                       np_set_pixel_rgbw_level(&px, i , 255,0,0,0,255);
+                    break;
+                  case 5:
+                  case 11:
+                   np_set_pixel_rgbw_level(&px, i , 255,255,255,0,255);
+                    break;
+              }
+              break;
+            default:
+               np_set_pixel_rgbw_level(&px, i , 0,0,0,0,255);
+               h.red = 16; h.green=0; h.blue=0;
+          }
       }
-      np_set_pixel_rgbw_level(&px, seq%8 , 0,255,0,0,255);
+
+      switch (state) {
+        case STATE_OK:
+        case STATE_POWERON:
+        case STATE_NOCOMM1:
+        case STATE_NOCOMM2:
+        case STATE_TWOBADPUMPS:
+          break;
+        default:
+          np_set_pixel_rgbw_level(&px, seq%8 , h.red,h.green,h.blue,0,255);
+          break;
+      }
       np_show(&px, NEOPIXEL_RMT_CHANNEL);
   }
 }
@@ -222,6 +388,11 @@ void LoRaTimer(TimerHandle_t xTimer) {
     xQueueSendFromISR(evt_queue, &item, NULL);
 }
 
+void DispoTimer(TimerHandle_t xTimer) {
+    ESP_LOGI(TAG,"Dispo Timer 0x%d\r",(uint32_t) xTimer);
+    uint32_t item = EVENT_DISPO_TIMER;
+    xQueueSendFromISR(evt_queue, &item, NULL);
+}
 unsigned char buf[55];
 void task_rx(void *p)
 {
@@ -290,6 +461,9 @@ static void main_task(void* arg)
           case EVENT_SENSOR_2:
             pump2++;
             updateSequence();
+            break;
+          case EVENT_DISPO_TIMER:
+            dispo();
             break;
           default:
             ESP_LOGE(TAG,"Unkown Event: %d",evtNo);
@@ -416,8 +590,10 @@ void app_main()
 
    //task_tx("Testing",7);
    timer = xTimerCreate("Timer",(CONFIG_TRANSMIT_SECONDS*1000 / portTICK_PERIOD_MS ),pdTRUE,(void *) 0,LoRaTimer);
+   dispoTimer = xTimerCreate("DispoTimer",(CONFIG_DISPOTIMER_SECONDS*1000 / portTICK_PERIOD_MS ),pdTRUE,(void *) 0,DispoTimer);
    ESP_LOGI(TAG,"Timer Created");
    xTimerStart(timer,0);
+   xTimerStart(dispoTimer,0);
    ESP_LOGI(TAG,"Timer Started");
 #if 0
 #endif
