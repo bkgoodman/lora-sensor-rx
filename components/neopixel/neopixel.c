@@ -316,6 +316,7 @@ int neopixel_init(int gpioNum, rmt_channel_t channel)
 {
 	esp_err_t res;
 	// Create semaphore if needed
+  RMTchannel = channel; // BKG NEW
 	if (neopixel_sem == NULL) {
 		neopixel_sem = xSemaphoreCreateBinary();
 		if (neopixel_sem == NULL) return ESP_FAIL;
@@ -369,6 +370,7 @@ int neopixel_init(int gpioNum, rmt_channel_t channel)
 	RMT.int_ena.val = tx_thr_event_mask | tx_end_event_mask;
 
   /* INIT RC */
+#if 0
     rmt_config_t config;
     config.rmt_mode = RMT_MODE_RX;
     config.channel = (rmt_channel_t) RMT_CHANNEL_2;
@@ -381,6 +383,7 @@ int neopixel_init(int gpioNum, rmt_channel_t channel)
     //ESP_ERROR_CHECK(rmt_config(&config));
     //ESP_ERROR_CHECK(rmt_set_rx_intr_en(RMT_CHANNEL_2, true));
     //ESP_ERROR_CHECK(rmt_rx_start(RMT_CHANNEL_2, 1));
+#endif 
 #if 0
   gpio_set_direction(GPIO_NUM_18, GPIO_MODE_INPUT);
 	res = rmt_set_pin(RCchannel, RMT_MODE_RX, (gpio_num_t)18);

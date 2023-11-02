@@ -328,7 +328,6 @@ void app_main()
    snprintf(macstr,sizeof(macstr),"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
 		   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
    ESP_LOGI(TAG,"Mac: %s",macstr);
-#if 1
 
 	ESP_LOGI(TAG,"OLED SDA %d OLED SCL %d MASTER_NUM %d",CONFIG_OLED_I2C_MASTER_SDA,CONFIG_OLED_I2C_MASTER_SCL,CONFIG_OLED_I2C_MASTER_PORT_NUM);
 	//i2c_master_init(&dev, CONFIG_OLED_I2C_MASTER_SDA, CONFIG_OLED_I2C_MASTER_SCL, -1);
@@ -361,7 +360,7 @@ void app_main()
 	*/
    evt_queue = xQueueCreate(10, sizeof(uint32_t));
 
-   gpio_install_isr_service(ESP_INTR_FLAG_LEVEL3);
+   // BKG REMOVED gpio_install_isr_service(ESP_INTR_FLAG_LEVEL3);
 
    // Set Button handler 
    gpio_config_t io_conf;
@@ -420,6 +419,7 @@ void app_main()
    ESP_LOGI(TAG,"Timer Created");
    xTimerStart(timer,0);
    ESP_LOGI(TAG,"Timer Started");
+#if 0
 #endif
    init_leds();
    xTaskCreate(&led_task, "led_task", 8192, NULL, 5, NULL);
