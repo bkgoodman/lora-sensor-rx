@@ -39,7 +39,9 @@ enum {
   STATE_NOCOMM1, // No comms activity in a while
   STATE_NOCOMM2, // No comms activity in a LONGER while
   STATE_ONEBADPUMP, // Good comms, but no activity on ONE pump for a while
-  STATE_TWOBADPUMPS // We have had no pump activity, but good comms for extendend time!!
+  STATE_TWOBADPUMPS, // We have had no pump activity, but good comms
+  STATE_TWOBADPUMPS2, // We have had no pump activity, but good comms for extendend time!!
+  STATE_ASYMETRY, // WE detected an asymetry problem
 };
 
 char *states[] = {
@@ -49,7 +51,8 @@ char *states[] = {
   "NoComms",
   "NoComms!!!",
   "OneBadPump",
-  "TwoBadPumps"
+  "TwoBadPumps",
+  "TwoBadPumps2!!",
 };
 
 unsigned short state=STATE_POWERON;
@@ -58,6 +61,7 @@ unsigned short last_seq_val=0;
 uint64_t last_pump1_time=0;
 unsigned short last_pump1_val=0;
 uint64_t last_pump2_time=0;
+uint64_t last_asym_time=0;
 unsigned short last_pump2_val=0;
 
 uint16_t crc16(const uint8_t *data, int length);
@@ -157,13 +161,15 @@ void task_tx(void *p,int txlen)
 #define MINUTES (60*SECONDS)
 #define HOURS (MINUTES * 60)
 
-#define TIMEOUT_PUMP  (6 * HOURS)
+#define TIMEOUT_PUMP  (4 * HOURS)
+#define TIMEOUT_PUMP2  (8 * HOURS)
 #define TIMEOUT_COMMS1  (15 * MINUTES)
 #define TIMEOUT_COMMS2  (60 * MINUTES)
 
 
 //What's the disposition?
 void dispo() {
+    char lineChar[32];
       uint64_t now = esp_timer_get_time()/1000000;
 
       uint64_t seqd =    now-last_seq_time;
@@ -181,6 +187,9 @@ void dispo() {
       if ((p2d >= TIMEOUT_PUMP) || (p1d >= TIMEOUT_PUMP))
         state = STATE_ONEBADPUMP;
 
+      if ((p2d >= TIMEOUT_PUMP2) && (p1d >= TIMEOUT_PUMP2))
+        state = STATE_TWOBADPUMPS2;
+
       if ((p2d >= TIMEOUT_PUMP) && (p1d >= TIMEOUT_PUMP))
         state = STATE_TWOBADPUMPS;
 
@@ -194,6 +203,35 @@ void dispo() {
           seqd,
           p1d,
           p2d,states[state]);
+
+
+    ssd1306_clear_line(&dev, 5, false);
+    snprintf(lineChar,sizeof(lineChar),
+      "Seq %u  - %u Min Ago",
+          last_seq_val,
+          (unsigned short) (seqd/60));
+    ssd1306_display_text(&dev, 5, lineChar, strlen(lineChar), false);
+
+    ssd1306_clear_line(&dev, 4, false);
+    snprintf(lineChar,sizeof(lineChar),
+      "State: %s" ,states[state]);
+    ssd1306_display_text(&dev, 4, lineChar, strlen(lineChar), false);
+
+
+    ssd1306_clear_line(&dev, 6, false);
+    snprintf(lineChar,sizeof(lineChar),
+      "Pump1 %u  - %u Min Ago",
+          last_pump1_val,
+          (unsigned short) (p1d/60));
+    ssd1306_display_text(&dev, 6, lineChar, strlen(lineChar), false);
+
+    ssd1306_clear_line(&dev, 7, false);
+    snprintf(lineChar,sizeof(lineChar),
+      "Pump2 %u  - %u Min Ago",
+          last_pump2_val,
+          (unsigned short) (p2d/60));
+    ssd1306_display_text(&dev, 7, lineChar, strlen(lineChar), false);
+
 }
 // K1BKG 00:11:22:33:44:55:66 Message<CS>
 // 0         1         2        3
@@ -231,6 +269,9 @@ int do_rx(char *p,int maxlen)
     ESP_LOGI(TAG,"Parsed (%d) %s %d %d %d CRC=0x%x/0x%x",res,callsign,r_seq,r_pump1,r_pump2,r_crc,newcrc);
     if (newcrc == r_crc) {
       uint64_t now = esp_timer_get_time()/1000000;
+      if ((r_pump1 != last_pump1_val) && (r_pump2 != last_pump2_val)) {
+        last_asym_time = now;
+      }
       if (r_pump1 != last_pump1_val) {
         last_pump1_val = r_pump1;
         last_pump1_time = now;
@@ -259,12 +300,17 @@ int led_task(void *p) {
   unsigned short seq=0;
   //rgb_t c;
   rgb_t h;
+  bool doasym;
   // Assign the values `{0, 0, 255}` to the `h` struct.
 
   while (1) {
+    uint64_t now = esp_timer_get_time();
     int i;
       vTaskDelay(100 / portTICK_PERIOD_MS);
       seq++;
+
+      doasym =  ((last_asym_time) && (last_asym_time > (now - HOURS)));
+
 
       unsigned char over = (seq+1)%8;
       unsigned char center = (seq%8);
@@ -309,10 +355,14 @@ int led_task(void *p) {
               break;
               break;
             case STATE_ONEBADPUMP: // Good comms, but no activity on ONE pump for a while
+               np_set_pixel_rgbw_level(&px, i , 128,64,0,0,255);
+               h.red = 255; h.green=128; h.blue=0;
+              break;
+            case STATE_TWOBADPUMPS: // Good comms, but no activity on ONE pump for a while
                np_set_pixel_rgbw_level(&px, i , 128,0,0,0,255);
                h.red = 255; h.green=0; h.blue=0;
               break;
-            case STATE_TWOBADPUMPS: // We have had no pump activity, but good comms for extendend time!!
+            case STATE_TWOBADPUMPS2: // We have had no pump activity, but good comms for extendend time!!
               switch (seq % 12) {
                   case 0:
                   case 2:
@@ -354,10 +404,15 @@ int led_task(void *p) {
         case STATE_NOCOMM1:
         case STATE_NOCOMM2:
         case STATE_TWOBADPUMPS:
+        case STATE_TWOBADPUMPS2:
           break;
         default:
           np_set_pixel_rgbw_level(&px, seq%8 , h.red,h.green,h.blue,0,255);
           break;
+      }
+
+      if (doasym) {
+          np_set_pixel_rgbw_level(&px, CONFIG_NEOPIXEL_COUNT-1 , (seq%2) ? 255:0,0,0,0,255);
       }
       np_show(&px, NEOPIXEL_RMT_CHANNEL);
   }
